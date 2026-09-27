@@ -31,6 +31,7 @@
       </header>
 
       <p id="statusMessage" role="status" aria-live="polite" class="hidden rounded-xl px-4 py-3 text-sm"></p>
+      <button id="retryLoadButton" type="button" class="hidden rounded-lg border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-800 shadow-sm hover:bg-rose-50 disabled:opacity-60">↻ 重新載入紀錄</button>
 
       <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="本月摘要">
         <article class="rounded-2xl border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-4 shadow-md shadow-emerald-900/5 transition hover:-translate-y-0.5 hover:shadow-lg"><p class="text-sm font-semibold text-emerald-800">🌱 本月收入</p><p id="incomeTotal" class="mt-2 text-2xl font-extrabold text-emerald-700">—</p></article>
@@ -121,6 +122,10 @@
         const el = $('statusMessage');
         el.textContent = message;
         el.className = `rounded-xl px-4 py-3 text-sm ${kind === 'error' ? 'bg-rose-50 text-rose-800' : kind === 'success' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`;
+      }
+      function loadErrorText(error) {
+        const detail = String(error?.message || error || '').trim();
+        return detail ? detail.slice(0, 140) : '資料服務暫時無法連線';
       }
       function formatMoney(value) {
         try { return new Intl.NumberFormat('zh-TW', { style: 'currency', currency, maximumFractionDigits: currency === 'JPY' ? 0 : 2 }).format(Number(value) || 0); }
@@ -292,13 +297,13 @@
           const savedTransactions = await readAllRecords('transactions');
           if (!Array.isArray(savedTransactions)) throw new Error('收支資料格式不正確');
           transactions = savedTransactions;
-        } catch (error) { console.error('載入收支紀錄失敗', error); issues.push('收支紀錄'); }
+        } catch (error) { console.error('載入收支紀錄失敗', error); issues.push(`收支紀錄：${loadErrorText(error)}`); }
         try {
           if (!window.sayoDb) throw new Error('資料服務尚未就緒');
           const savedBudgets = await readAllRecords('budgets');
           if (!Array.isArray(savedBudgets)) throw new Error('預算資料格式不正確');
           budgets = savedBudgets;
-        } catch (error) { console.error('載入預算紀錄失敗', error); issues.push('預算紀錄'); }
+        } catch (error) { console.error('載入預算紀錄失敗', error); issues.push(`預算紀錄：${loadErrorText(error)}`); }
         try { if (window.sayoDb) isOwner = await window.sayoDb.isOwner(); }
         catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
         try {
@@ -306,8 +311,19 @@
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
         renderAll();
-        if (issues.length) showStatus(`暫時無法載入${issues.join('及')}，其他功能仍可使用；請確認已登入後重試。`, 'error');
+        if (issues.length) {
+          $('retryLoadButton').classList.remove('hidden');
+          showStatus(`暫時無法載入資料。${issues.join('；')}。請按「重新載入紀錄」再試。`, 'error');
+        } else {
+          $('retryLoadButton').classList.add('hidden');
+        }
       }
+      $('retryLoadButton').addEventListener('click', async () => {
+        const button = $('retryLoadButton');
+        button.disabled = true; button.textContent = '載入中…';
+        try { await init(); }
+        finally { button.disabled = false; button.textContent = '↻ 重新載入紀錄'; }
+      });
       init();
     </script>
   </body>
