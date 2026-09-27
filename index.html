@@ -219,15 +219,31 @@
         }
       }
       const writeMessages = { 'too-large': '資料太大，請縮短備註後再試。', 'too-many-items': '紀錄筆數已達上限，無法新增。', 'quota-exceeded': '儲存空間已滿，請稍後再試。', 'rate-limited': '操作太頻繁，請稍候再試。', 'stale-replace': '資料已更新，請重新整理後再試。' };
-      function writeError(result) { return writeMessages[result.code] || result.error || '儲存失敗，請稍後再試。'; }
+      function writeError(result) {
+        const code = String(result?.code || '').toLowerCase();
+        if (['unauthorized', 'unauthenticated'].includes(code)) return '登入狀態無效，請重新登入後再儲存。';
+        if (['forbidden', 'read-only', 'readonly', 'permission-denied'].includes(code)) return '目前無法寫入這份資料，請確認帳戶權限。';
+        return writeMessages[code] || result?.error || '儲存失敗，請稍後再試。';
+      }
+      function thrownSaveError(error) {
+        const code = String(error?.code || '').toLowerCase();
+        const detail = String(error?.message || '').toLowerCase();
+        if (['unauthorized', 'unauthenticated'].includes(code) || /unauthori[sz]ed|unauthenticated|sign.?in/.test(detail)) return '登入狀態無效，請重新登入後再儲存。';
+        if (/forbidden|read.?only|permission denied/.test(detail)) return '目前無法寫入這份資料，請確認帳戶權限。';
+        if (/network|fetch|timeout|connection/.test(detail)) return '網路連線不穩，請檢查連線後重試。';
+        if (!window.sayoDb || typeof window.sayoDb.getUserId !== 'function' || typeof window.sayoDb.append !== 'function') return '紀錄服務尚未準備好，請重新開啟應用後再試。';
+        return '儲存未完成，表單內容已保留；請稍後重試。';
+      }
       async function saveRecord(collection, item, button) {
         button.disabled = true; button.textContent = '儲存中…';
         try {
+          if (!window.sayoDb || typeof window.sayoDb.getUserId !== 'function' || typeof window.sayoDb.append !== 'function') throw new Error('紀錄服務尚未準備好');
           item.authorUserId = await window.sayoDb.getUserId();
+          if (!item.authorUserId) throw new Error('登入狀態無效');
           const result = await window.sayoDb.append(collection, item);
-          if (!result || !result.ok) { showStatus(writeError(result || {}), 'error'); return false; }
+          if (!result || !result.ok) { showStatus(`未能儲存，表單內容已保留。${writeError(result || {})}`, 'error'); return false; }
           return true;
-        } catch (error) { console.error('儲存紀錄失敗', error); showStatus('儲存時發生問題，請稍後再試。', 'error'); return false; }
+        } catch (error) { console.error('儲存紀錄失敗', error); showStatus(thrownSaveError(error), 'error'); return false; }
         finally { button.disabled = false; button.textContent = collection === 'transactions' ? '新增紀錄' : '儲存此分類預算'; }
       }
       async function deleteTransaction(item) {
