@@ -116,7 +116,7 @@
       const today = `${monthNow}-${String(now.getDate()).padStart(2, '0')}`;
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
-      let transactions = [], budgets = [], isOwner = false, currency = 'HKD';
+      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', localMode = false;
       const currencyNames = { TWD: '新台幣', USD: '美元', HKD: '港幣', CNY: '人民幣', JPY: '日圓' };
       function showStatus(message, kind = 'info') {
         const el = $('statusMessage');
@@ -244,21 +244,31 @@
         return '儲存未完成，表單內容已保留；請稍後重試。';
       }
       async function saveRecord(collection, item, button) {
-        button.disabled = true; button.textContent = '連線中…';
+        button.disabled = true; button.textContent = '儲存中…';
         try {
-          const db = await waitForRecordService();
-          button.textContent = '儲存中…';
+          if (localMode) {
+            const current = collection === 'transactions' ? transactions : budgets;
+            await window.sayoStorage.setItem(`finance_${collection}`, JSON.stringify([...current, item]));
+            return true;
+          }
+          const db = window.sayoDb;
+          if (!db || typeof db.append !== 'function' || typeof db.getUserId !== 'function') throw new Error('記錄服務未連接');
           item.authorUserId = await db.getUserId();
           if (!item.authorUserId) throw new Error('登入狀態無效');
           const result = await db.append(collection, item);
           if (!result || !result.ok) { showStatus(`未能儲存，表單內容已保留。${writeError(result || {})}`, 'error'); return false; }
           return true;
-        } catch (error) { console.error('儲存紀錄失敗', error); showStatus(thrownSaveError(error), 'error'); return false; }
+        } catch (error) { console.error('儲存紀錄失敗', error); showStatus(localMode ? '本機儲存失敗，表單內容已保留；請稍後再試。' : thrownSaveError(error), 'error'); return false; }
         finally { button.disabled = false; button.textContent = collection === 'transactions' ? '新增紀錄' : '儲存此分類預算'; }
       }
       async function deleteTransaction(item) {
         if (!confirm('確定刪除此筆收支紀錄？')) return;
         try {
+          if (localMode) {
+            const remaining = transactions.filter(tx => tx.id !== item.id);
+            await window.sayoStorage.setItem('finance_transactions', JSON.stringify(remaining));
+            transactions = remaining; renderAll(); showStatus('紀錄已刪除。', 'success'); return;
+          }
           const result = await window.sayoDb.adminDelete('transactions', item.id, item.authorUserId);
           if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
           transactions = transactions.filter(tx => tx.id !== item.id); renderAll(); showStatus('紀錄已刪除。', 'success');
@@ -267,6 +277,11 @@
       async function deleteBudget(item) {
         if (!confirm('確定刪除此分類預算？')) return;
         try {
+          if (localMode) {
+            const remaining = budgets.filter(entry => entry.id !== item.id);
+            await window.sayoStorage.setItem('finance_budgets', JSON.stringify(remaining));
+            budgets = remaining; renderAll(); showStatus('預算已刪除。', 'success'); return;
+          }
           const result = await window.sayoDb.adminDelete('budgets', item.id, item.authorUserId);
           if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
           budgets = budgets.filter(entry => entry.id !== item.id); renderAll(); showStatus('預算已刪除。', 'success');
@@ -302,8 +317,10 @@
         catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但設定未能保存。', 'error'); }
       });
       async function readAllRecords(collection) {
-        const db = await waitForRecordService();
+        const db = window.sayoDb;
+        if (!db) throw new Error('資料服務尚未就緒');
         if (typeof db.getAll === 'function') return await db.getAll(collection);
+        if (typeof db.get !== 'function') throw new Error('資料服務尚未就緒');
         const all = [];
         let page = await db.get(collection);
         if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
@@ -315,30 +332,44 @@
         }
         return all;
       }
+      async function readLocalRecords(collection) {
+        const raw = await window.sayoStorage.getItem(`finance_${collection}`);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error('本機紀錄格式不正確');
+        return parsed;
+      }
       async function init() {
         updateTransactionCategories(); addOptions($('budgetCategory'), expenseCategories);
         renderAll();
-        const issues = [];
+        let loadIssue = '';
         try {
-          const savedTransactions = await readAllRecords('transactions');
-          if (!Array.isArray(savedTransactions)) throw new Error('收支資料格式不正確');
-          transactions = savedTransactions;
-        } catch (error) { console.error('載入收支紀錄失敗', error); issues.push(`收支紀錄：${loadErrorText(error)}`); }
-        try {
-          const savedBudgets = await readAllRecords('budgets');
-          if (!Array.isArray(savedBudgets)) throw new Error('預算資料格式不正確');
-          budgets = savedBudgets;
-        } catch (error) { console.error('載入預算紀錄失敗', error); issues.push(`預算紀錄：${loadErrorText(error)}`); }
-        try { if (window.sayoDb) isOwner = await window.sayoDb.isOwner(); }
-        catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
+          const db = window.sayoDb;
+          if (!db || (typeof db.getAll !== 'function' && typeof db.get !== 'function')) throw new Error('使用本機紀錄');
+          const [savedTransactions, savedBudgets] = await Promise.all([readAllRecords('transactions'), readAllRecords('budgets')]);
+          if (!Array.isArray(savedTransactions) || !Array.isArray(savedBudgets)) throw new Error('紀錄格式不正確');
+          transactions = savedTransactions; budgets = savedBudgets; localMode = false;
+          try { isOwner = typeof db.isOwner === 'function' ? await db.isOwner() : false; }
+          catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
+        } catch (error) {
+          console.info('切換至本機紀錄模式', error);
+          localMode = true; isOwner = true;
+          try {
+            [transactions, budgets] = await Promise.all([readLocalRecords('transactions'), readLocalRecords('budgets')]);
+          } catch (localError) {
+            console.error('載入本機紀錄失敗', localError);
+            transactions = []; budgets = [];
+            loadIssue = '無法讀取本機紀錄，請稍後重試。';
+          }
+        }
         try {
           const savedCurrency = await window.sayoStorage.getItem('financeCurrency');
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
         renderAll();
-        if (issues.length) {
+        if (loadIssue) {
           $('retryLoadButton').classList.remove('hidden');
-          showStatus(`暫時無法載入資料。${issues.join('；')}。請按「重新載入紀錄」再試。`, 'error');
+          showStatus(loadIssue, 'error');
         } else {
           $('retryLoadButton').classList.add('hidden');
         }
