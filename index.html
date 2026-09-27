@@ -225,22 +225,32 @@
         if (['forbidden', 'read-only', 'readonly', 'permission-denied'].includes(code)) return '目前無法寫入這份資料，請確認帳戶權限。';
         return writeMessages[code] || result?.error || '儲存失敗，請稍後再試。';
       }
+      async function waitForRecordService(timeoutMs = 6000) {
+        const started = Date.now();
+        while (Date.now() - started < timeoutMs) {
+          const db = window.sayoDb;
+          if (db && typeof db.getUserId === 'function' && typeof db.append === 'function' && (typeof db.getAll === 'function' || typeof db.get === 'function')) return db;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        throw new Error('記錄服務未連接');
+      }
       function thrownSaveError(error) {
         const code = String(error?.code || '').toLowerCase();
         const detail = String(error?.message || '').toLowerCase();
         if (['unauthorized', 'unauthenticated'].includes(code) || /unauthori[sz]ed|unauthenticated|sign.?in/.test(detail)) return '登入狀態無效，請重新登入後再儲存。';
         if (/forbidden|read.?only|permission denied/.test(detail)) return '目前無法寫入這份資料，請確認帳戶權限。';
         if (/network|fetch|timeout|connection/.test(detail)) return '網路連線不穩，請檢查連線後重試。';
-        if (!window.sayoDb || typeof window.sayoDb.getUserId !== 'function' || typeof window.sayoDb.append !== 'function') return '紀錄服務尚未準備好，請重新開啟應用後再試。';
+        if (/記錄服務未連接/.test(detail)) return '記錄功能尚未連接。請從已儲存的應用重新開啟；若仍無法使用，請確認此應用已啟用紀錄儲存。';
         return '儲存未完成，表單內容已保留；請稍後重試。';
       }
       async function saveRecord(collection, item, button) {
-        button.disabled = true; button.textContent = '儲存中…';
+        button.disabled = true; button.textContent = '連線中…';
         try {
-          if (!window.sayoDb || typeof window.sayoDb.getUserId !== 'function' || typeof window.sayoDb.append !== 'function') throw new Error('紀錄服務尚未準備好');
-          item.authorUserId = await window.sayoDb.getUserId();
+          const db = await waitForRecordService();
+          button.textContent = '儲存中…';
+          item.authorUserId = await db.getUserId();
           if (!item.authorUserId) throw new Error('登入狀態無效');
-          const result = await window.sayoDb.append(collection, item);
+          const result = await db.append(collection, item);
           if (!result || !result.ok) { showStatus(`未能儲存，表單內容已保留。${writeError(result || {})}`, 'error'); return false; }
           return true;
         } catch (error) { console.error('儲存紀錄失敗', error); showStatus(thrownSaveError(error), 'error'); return false; }
@@ -292,13 +302,14 @@
         catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但設定未能保存。', 'error'); }
       });
       async function readAllRecords(collection) {
-        if (typeof window.sayoDb.getAll === 'function') return await window.sayoDb.getAll(collection);
+        const db = await waitForRecordService();
+        if (typeof db.getAll === 'function') return await db.getAll(collection);
         const all = [];
-        let page = await window.sayoDb.get(collection);
+        let page = await db.get(collection);
         if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
         all.push(...page);
         while (page.hasMore && page.nextCursor) {
-          page = await window.sayoDb.get(collection, { cursor: page.nextCursor });
+          page = await db.get(collection, { cursor: page.nextCursor });
           if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
           all.push(...page);
         }
@@ -309,13 +320,11 @@
         renderAll();
         const issues = [];
         try {
-          if (!window.sayoDb) throw new Error('資料服務尚未就緒');
           const savedTransactions = await readAllRecords('transactions');
           if (!Array.isArray(savedTransactions)) throw new Error('收支資料格式不正確');
           transactions = savedTransactions;
         } catch (error) { console.error('載入收支紀錄失敗', error); issues.push(`收支紀錄：${loadErrorText(error)}`); }
         try {
-          if (!window.sayoDb) throw new Error('資料服務尚未就緒');
           const savedBudgets = await readAllRecords('budgets');
           if (!Array.isArray(savedBudgets)) throw new Error('預算資料格式不正確');
           budgets = savedBudgets;
