@@ -270,17 +270,43 @@
         try { await window.sayoStorage.setItem('financeCurrency', currency); showStatus(`幣別已切換為${currencyNames[currency]}。`, 'success'); }
         catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但設定未能保存。', 'error'); }
       });
+      async function readAllRecords(collection) {
+        if (typeof window.sayoDb.getAll === 'function') return await window.sayoDb.getAll(collection);
+        const all = [];
+        let page = await window.sayoDb.get(collection);
+        if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
+        all.push(...page);
+        while (page.hasMore && page.nextCursor) {
+          page = await window.sayoDb.get(collection, { cursor: page.nextCursor });
+          if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
+          all.push(...page);
+        }
+        return all;
+      }
       async function init() {
         updateTransactionCategories(); addOptions($('budgetCategory'), expenseCategories);
+        renderAll();
+        const issues = [];
         try {
-          const [savedTransactions, savedBudgets] = await Promise.all([window.sayoDb.getAll('transactions'), window.sayoDb.getAll('budgets')]);
-          transactions = Array.isArray(savedTransactions) ? savedTransactions : [];
-          budgets = Array.isArray(savedBudgets) ? savedBudgets : [];
-          isOwner = await window.sayoDb.isOwner();
+          if (!window.sayoDb) throw new Error('資料服務尚未就緒');
+          const savedTransactions = await readAllRecords('transactions');
+          if (!Array.isArray(savedTransactions)) throw new Error('收支資料格式不正確');
+          transactions = savedTransactions;
+        } catch (error) { console.error('載入收支紀錄失敗', error); issues.push('收支紀錄'); }
+        try {
+          if (!window.sayoDb) throw new Error('資料服務尚未就緒');
+          const savedBudgets = await readAllRecords('budgets');
+          if (!Array.isArray(savedBudgets)) throw new Error('預算資料格式不正確');
+          budgets = savedBudgets;
+        } catch (error) { console.error('載入預算紀錄失敗', error); issues.push('預算紀錄'); }
+        try { if (window.sayoDb) isOwner = await window.sayoDb.isOwner(); }
+        catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
+        try {
           const savedCurrency = await window.sayoStorage.getItem('financeCurrency');
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
-          renderAll();
-        } catch (error) { console.error('載入財務紀錄失敗', error); renderAll(); showStatus('目前無法載入紀錄，請重新整理頁面再試。', 'error'); }
+        } catch (error) { console.error('載入幣別設定失敗', error); }
+        renderAll();
+        if (issues.length) showStatus(`暫時無法載入${issues.join('及')}，其他功能仍可使用；請確認已登入後重試。`, 'error');
       }
       init();
     </script>
