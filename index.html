@@ -105,7 +105,7 @@
           </section>
         </div>
       </div>
-      <footer class="pb-2 text-center text-xs text-slate-400">收支與預算紀錄會儲存，方便日後檢視。</footer>
+      <footer class="pb-2 text-center text-xs text-slate-500">跨裝置同步需登入同一帳戶並使用個人資料模式；本機紀錄僅存於目前裝置。私人財務請勿使用共享資料模式。</footer>
     </main>
     <script>
       const expenseCategories = ['餐飲', '交通', '居住', '購物', '娛樂', '醫療', '教育', '帳單', '存錢', '投資', '其他'];
@@ -117,6 +117,7 @@
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
       let transactions = [], budgets = [], isOwner = false, currency = 'HKD', localMode = false, browserStorageMode = false;
+      const localOnlyTransactionIds = new Set(), localOnlyBudgetIds = new Set();
       const currencyNames = { TWD: '新台幣', USD: '美元', HKD: '港幣', CNY: '人民幣', JPY: '日圓' };
       function showStatus(message, kind = 'info') {
         const el = $('statusMessage');
@@ -283,10 +284,11 @@
       async function deleteTransaction(item) {
         if (!confirm('確定刪除此筆收支紀錄？')) return;
         try {
-          if (localMode) {
-            const remaining = transactions.filter(tx => tx.id !== item.id);
-            await setLocalItem('finance_transactions', JSON.stringify(remaining));
-            transactions = remaining; renderAll(); showStatus('紀錄已刪除。', 'success'); return;
+          if (localMode || localOnlyTransactionIds.has(item.id)) {
+            const stored = await readLocalRecords('transactions');
+            await setLocalItem('finance_transactions', JSON.stringify(stored.filter(tx => tx.id !== item.id)));
+            localOnlyTransactionIds.delete(item.id);
+            transactions = transactions.filter(tx => tx.id !== item.id); renderAll(); showStatus('紀錄已刪除。', 'success'); return;
           }
           const result = await window.sayoDb.adminDelete('transactions', item.id, item.authorUserId);
           if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
@@ -296,10 +298,11 @@
       async function deleteBudget(item) {
         if (!confirm('確定刪除此分類預算？')) return;
         try {
-          if (localMode) {
-            const remaining = budgets.filter(entry => entry.id !== item.id);
-            await setLocalItem('finance_budgets', JSON.stringify(remaining));
-            budgets = remaining; renderAll(); showStatus('預算已刪除。', 'success'); return;
+          if (localMode || localOnlyBudgetIds.has(item.id)) {
+            const stored = await readLocalRecords('budgets');
+            await setLocalItem('finance_budgets', JSON.stringify(stored.filter(entry => entry.id !== item.id)));
+            localOnlyBudgetIds.delete(item.id);
+            budgets = budgets.filter(entry => entry.id !== item.id); renderAll(); showStatus('預算已刪除。', 'success'); return;
           }
           const result = await window.sayoDb.adminDelete('budgets', item.id, item.authorUserId);
           if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
@@ -358,21 +361,63 @@
         if (!Array.isArray(parsed)) throw new Error('本機紀錄格式不正確');
         return parsed;
       }
+      async function syncLocalCollection(collection, cloudItems, db) {
+        const localIds = collection === 'transactions' ? localOnlyTransactionIds : localOnlyBudgetIds;
+        localIds.clear();
+        let localItems;
+        try { localItems = await readLocalRecords(collection); }
+        catch (error) { console.error('讀取待同步本機紀錄失敗', error); return { items: cloudItems, migrated: 0, pending: 0, issue: '無法讀取此瀏覽器的部分舊紀錄。' }; }
+        const merged = [...cloudItems], known = new Set(cloudItems.map(item => String(item.id)));
+        let userId = '';
+        try { userId = await db.getUserId(); }
+        catch (error) { console.error('取得帳戶資訊以同步紀錄失敗', error); }
+        let migrated = 0;
+        const pendingItems = [];
+        for (let i = 0; i < localItems.length; i++) {
+          const localItem = localItems[i];
+          if (!localItem || known.has(String(localItem.id))) continue;
+          const item = { ...localItem, id: localItem.id || makeId() };
+          if (!userId) {
+            pendingItems.push(item); localIds.add(item.id); merged.push(item); continue;
+          }
+          item.authorUserId = item.authorUserId || userId;
+          item.createdAt = item.createdAt || new Date().toISOString();
+          showStatus(`正在同步此瀏覽器的舊紀錄（${i + 1}/${localItems.length}）…`, 'info');
+          try {
+            const result = await db.append(collection, item);
+            if (!result || !result.ok) throw new Error(writeError(result || {}));
+            known.add(String(item.id)); merged.push(item); migrated++;
+          } catch (error) {
+            console.error('同步本機紀錄失敗', error);
+            pendingItems.push(item); localIds.add(item.id); merged.push(item);
+          }
+          if (i < localItems.length - 1) await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        try { await setLocalItem(`finance_${collection}`, JSON.stringify(pendingItems)); }
+        catch (error) { console.error('清理已同步的本機備份失敗', error); }
+        return { items: merged, migrated, pending: pendingItems.length, issue: '' };
+      }
       async function init() {
         updateTransactionCategories(); addOptions($('budgetCategory'), expenseCategories);
         renderAll();
-        let loadIssue = '';
+        let loadIssue = '', cloudConnected = false, migratedCount = 0, pendingCount = 0;
         try {
-          const db = window.sayoDb;
-          if (!db || (typeof db.getAll !== 'function' && typeof db.get !== 'function')) throw new Error('使用本機紀錄');
+          const db = await waitForRecordService();
           const [savedTransactions, savedBudgets] = await Promise.all([readAllRecords('transactions'), readAllRecords('budgets')]);
           if (!Array.isArray(savedTransactions) || !Array.isArray(savedBudgets)) throw new Error('紀錄格式不正確');
-          transactions = savedTransactions; budgets = savedBudgets; localMode = false;
+          localMode = false;
+          const txSync = await syncLocalCollection('transactions', savedTransactions, db);
+          const budgetSync = await syncLocalCollection('budgets', savedBudgets, db);
+          transactions = txSync.items; budgets = budgetSync.items;
+          migratedCount = txSync.migrated + budgetSync.migrated;
+          pendingCount = txSync.pending + budgetSync.pending;
+          loadIssue = txSync.issue || budgetSync.issue;
+          cloudConnected = true;
           try { isOwner = typeof db.isOwner === 'function' ? await db.isOwner() : false; }
           catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
         } catch (error) {
-          console.info('切換至本機紀錄模式', error);
-          localMode = true; isOwner = true;
+          console.info('雲端紀錄暫不可用，改用本機紀錄', error);
+          localMode = true; isOwner = true; localOnlyTransactionIds.clear(); localOnlyBudgetIds.clear();
           try {
             [transactions, budgets] = await Promise.all([readLocalRecords('transactions'), readLocalRecords('budgets')]);
           } catch (localError) {
@@ -386,18 +431,21 @@
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
         renderAll();
-        if (loadIssue) {
-          $('retryLoadButton').classList.remove('hidden');
-          showStatus(loadIssue, 'error');
-        } else {
-          $('retryLoadButton').classList.add('hidden');
-        }
+        const retryButton = $('retryLoadButton');
+        if (!cloudConnected || pendingCount || loadIssue) {
+          retryButton.classList.remove('hidden'); retryButton.textContent = '↻ 連線並同步';
+        } else retryButton.classList.add('hidden');
+        if (!cloudConnected) showStatus(loadIssue || '目前只儲存在此瀏覽器，尚未同步其他裝置。請使用同一帳戶並啟用個人資料同步，再按「連線並同步」。', loadIssue ? 'error' : 'info');
+        else if (pendingCount) showStatus(`部分本機紀錄尚未同步（${pendingCount} 筆），仍保留在此瀏覽器；請稍後再試。`, 'error');
+        else if (loadIssue) showStatus(loadIssue, 'error');
+        else if (migratedCount) showStatus(`已將 ${migratedCount} 筆舊紀錄同步至帳戶；請在其他裝置使用同一帳戶開啟。私人財務請使用個人資料模式。`, 'success');
+        else showStatus('已連接帳戶紀錄。跨裝置查看請使用同一帳戶；私人財務請使用個人資料模式。', 'success');
       }
       $('retryLoadButton').addEventListener('click', async () => {
         const button = $('retryLoadButton');
-        button.disabled = true; button.textContent = '載入中…';
+        button.disabled = true; button.textContent = '連線中…';
         try { await init(); }
-        finally { button.disabled = false; button.textContent = '↻ 重新載入紀錄'; }
+        finally { button.disabled = false; if (!button.classList.contains('hidden')) button.textContent = '↻ 連線並同步'; }
       });
       init();
     </script>
