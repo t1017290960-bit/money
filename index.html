@@ -105,7 +105,7 @@
           </section>
         </div>
       </div>
-      <footer class="pb-2 text-center text-xs text-slate-500">跨裝置同步需登入同一帳戶並使用個人資料模式；本機紀錄僅存於目前裝置。私人財務請勿使用共享資料模式。</footer>
+      <footer class="pb-2 text-center text-xs text-slate-500">應用內紀錄無法使用時，會改存此瀏覽器；瀏覽器備份只在目前裝置可用，不會同步到其他裝置。</footer>
     </main>
     <script>
       const expenseCategories = ['餐飲', '交通', '居住', '購物', '娛樂', '醫療', '教育', '帳單', '存錢', '投資', '其他'];
@@ -266,19 +266,23 @@
       async function saveRecord(collection, item, button) {
         button.disabled = true; button.textContent = '儲存中…';
         try {
-          if (localMode) {
-            const current = collection === 'transactions' ? transactions : budgets;
-            await setLocalItem(`finance_${collection}`, JSON.stringify([...current, item]));
-            return true;
+          if (!localMode) {
+            try {
+              const db = window.sayoDb;
+              if (!db || typeof db.append !== 'function' || typeof db.getUserId !== 'function') throw new Error('應用內紀錄服務未連接');
+              item.authorUserId = await db.getUserId();
+              if (!item.authorUserId) throw new Error('登入狀態無效');
+              const result = await db.append(collection, item);
+              if (!result || !result.ok) throw new Error(writeError(result || {}));
+              return true;
+            } catch (error) { console.error('應用內儲存失敗，改用此瀏覽器', error); }
           }
-          const db = window.sayoDb;
-          if (!db || typeof db.append !== 'function' || typeof db.getUserId !== 'function') throw new Error('記錄服務未連接');
-          item.authorUserId = await db.getUserId();
-          if (!item.authorUserId) throw new Error('登入狀態無效');
-          const result = await db.append(collection, item);
-          if (!result || !result.ok) { showStatus(`未能儲存，表單內容已保留。${writeError(result || {})}`, 'error'); return false; }
+          const current = collection === 'transactions' ? transactions : budgets;
+          await setLocalItem(`finance_${collection}`, JSON.stringify([...current, item]));
+          localMode = true; isOwner = true;
+          showStatus('應用內儲存未能使用，紀錄已改存此瀏覽器；不會同步到其他裝置。', 'info');
           return true;
-        } catch (error) { console.error('儲存紀錄失敗', error); showStatus(localMode ? '本機儲存失敗，表單內容已保留；請稍後再試。' : thrownSaveError(error), 'error'); return false; }
+        } catch (error) { console.error('收支紀錄儲存失敗', error); showStatus('儲存失敗，表單內容已保留；請檢查瀏覽器儲存空間後重試。', 'error'); return false; }
         finally { button.disabled = false; button.textContent = collection === 'transactions' ? '新增紀錄' : '儲存此分類預算'; }
       }
       async function deleteTransaction(item) {
@@ -321,7 +325,7 @@
         const item = { id: makeId(), type, amount, category: $('transactionCategory').value, note: $('transactionNote').value.trim(), allocationNote: type === 'income' ? $('incomeAllocation').value.trim() : '', date, month: date.slice(0, 7), createdAt: new Date().toISOString() };
         const button = $('transactionSubmit');
         if (await saveRecord('transactions', item, button)) {
-          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus(browserStorageMode ? '收支紀錄已儲存在此瀏覽器。' : '收支紀錄已儲存。', 'success');
+          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus(localMode ? '收支紀錄已儲存在此裝置；不會同步。' : '收支紀錄已儲存。', 'success');
         }
       });
       $('budgetForm').addEventListener('submit', async event => {
@@ -330,7 +334,7 @@
         if (!Number.isFinite(amount) || amount <= 0) { showStatus('請輸入大於 0 的預算金額。', 'error'); return; }
         const item = { id: makeId(), month, category: $('budgetCategory').value, amount, createdAt: new Date().toISOString() };
         if (await saveRecord('budgets', item, $('budgetSubmit'))) {
-          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus(browserStorageMode ? '分類預算已儲存在此瀏覽器。' : '分類預算已儲存。', 'success');
+          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus(localMode ? '分類預算已儲存在此裝置；不會同步。' : '分類預算已儲存。', 'success');
         }
       });
       $('currencySelect').addEventListener('change', async event => {
@@ -361,70 +365,23 @@
         if (!Array.isArray(parsed)) throw new Error('本機紀錄格式不正確');
         return parsed;
       }
-      async function syncLocalCollection(collection, cloudItems, db) {
-        const localIds = collection === 'transactions' ? localOnlyTransactionIds : localOnlyBudgetIds;
-        localIds.clear();
-        let localItems;
-        try { localItems = await readLocalRecords(collection); }
-        catch (error) { console.error('讀取待同步本機紀錄失敗', error); return { items: cloudItems, migrated: 0, pending: 0, issue: '無法讀取此瀏覽器的部分舊紀錄。' }; }
-        const merged = [...cloudItems], known = new Set(cloudItems.map(item => String(item.id)));
-        let userId = '';
-        try { userId = await db.getUserId(); }
-        catch (error) { console.error('取得帳戶資訊以同步紀錄失敗', error); }
-        let migrated = 0;
-        const pendingItems = [];
-        for (let i = 0; i < localItems.length; i++) {
-          const localItem = localItems[i];
-          if (!localItem || known.has(String(localItem.id))) continue;
-          const item = { ...localItem, id: localItem.id || makeId() };
-          if (!userId) {
-            pendingItems.push(item); localIds.add(item.id); merged.push(item); continue;
-          }
-          item.authorUserId = item.authorUserId || userId;
-          item.createdAt = item.createdAt || new Date().toISOString();
-          showStatus(`正在同步此瀏覽器的舊紀錄（${i + 1}/${localItems.length}）…`, 'info');
-          try {
-            const result = await db.append(collection, item);
-            if (!result || !result.ok) throw new Error(writeError(result || {}));
-            known.add(String(item.id)); merged.push(item); migrated++;
-          } catch (error) {
-            console.error('同步本機紀錄失敗', error);
-            pendingItems.push(item); localIds.add(item.id); merged.push(item);
-          }
-          if (i < localItems.length - 1) await new Promise(resolve => setTimeout(resolve, 250));
-        }
-        try { await setLocalItem(`finance_${collection}`, JSON.stringify(pendingItems)); }
-        catch (error) { console.error('清理已同步的本機備份失敗', error); }
-        return { items: merged, migrated, pending: pendingItems.length, issue: '' };
-      }
       async function init() {
         updateTransactionCategories(); addOptions($('budgetCategory'), expenseCategories);
         renderAll();
-        let loadIssue = '', cloudConnected = false, migratedCount = 0, pendingCount = 0;
+        let loadIssue = '';
         try {
-          const db = await waitForRecordService();
+          const db = window.sayoDb;
+          if (!db || (typeof db.getAll !== 'function' && typeof db.get !== 'function')) throw new Error('應用內紀錄服務未連接');
           const [savedTransactions, savedBudgets] = await Promise.all([readAllRecords('transactions'), readAllRecords('budgets')]);
           if (!Array.isArray(savedTransactions) || !Array.isArray(savedBudgets)) throw new Error('紀錄格式不正確');
-          localMode = false;
-          const txSync = await syncLocalCollection('transactions', savedTransactions, db);
-          const budgetSync = await syncLocalCollection('budgets', savedBudgets, db);
-          transactions = txSync.items; budgets = budgetSync.items;
-          migratedCount = txSync.migrated + budgetSync.migrated;
-          pendingCount = txSync.pending + budgetSync.pending;
-          loadIssue = txSync.issue || budgetSync.issue;
-          cloudConnected = true;
+          transactions = savedTransactions; budgets = savedBudgets; localMode = false;
           try { isOwner = typeof db.isOwner === 'function' ? await db.isOwner() : false; }
           catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
         } catch (error) {
-          console.info('雲端紀錄暫不可用，改用本機紀錄', error);
+          console.info('應用內紀錄服務無法使用，改用此瀏覽器儲存', error);
           localMode = true; isOwner = true; localOnlyTransactionIds.clear(); localOnlyBudgetIds.clear();
-          try {
-            [transactions, budgets] = await Promise.all([readLocalRecords('transactions'), readLocalRecords('budgets')]);
-          } catch (localError) {
-            console.error('載入本機紀錄失敗', localError);
-            transactions = []; budgets = [];
-            loadIssue = '無法讀取本機紀錄，請稍後重試。';
-          }
+          try { [transactions, budgets] = await Promise.all([readLocalRecords('transactions'), readLocalRecords('budgets')]); }
+          catch (localError) { console.error('載入瀏覽器紀錄失敗', localError); transactions = []; budgets = []; loadIssue = '無法讀取此瀏覽器的紀錄，請檢查儲存空間設定。'; }
         }
         try {
           const savedCurrency = await getLocalItem('financeCurrency');
@@ -432,20 +389,17 @@
         } catch (error) { console.error('載入幣別設定失敗', error); }
         renderAll();
         const retryButton = $('retryLoadButton');
-        if (!cloudConnected || pendingCount || loadIssue) {
-          retryButton.classList.remove('hidden'); retryButton.textContent = '↻ 連線並同步';
-        } else retryButton.classList.add('hidden');
-        if (!cloudConnected) showStatus(loadIssue || '目前只儲存在此瀏覽器，尚未同步其他裝置。請使用同一帳戶並啟用個人資料同步，再按「連線並同步」。', loadIssue ? 'error' : 'info');
-        else if (pendingCount) showStatus(`部分本機紀錄尚未同步（${pendingCount} 筆），仍保留在此瀏覽器；請稍後再試。`, 'error');
-        else if (loadIssue) showStatus(loadIssue, 'error');
-        else if (migratedCount) showStatus(`已將 ${migratedCount} 筆舊紀錄同步至帳戶；請在其他裝置使用同一帳戶開啟。私人財務請使用個人資料模式。`, 'success');
-        else showStatus('已連接帳戶紀錄。跨裝置查看請使用同一帳戶；私人財務請使用個人資料模式。', 'success');
+        if (localMode || loadIssue) { retryButton.classList.remove('hidden'); retryButton.textContent = '↻ 重試應用內儲存'; }
+        else retryButton.classList.add('hidden');
+        if (loadIssue) showStatus(loadIssue, 'error');
+        else if (localMode) showStatus('應用內儲存未能使用，紀錄改存在此瀏覽器；不會同步到其他裝置。', 'info');
+        else showStatus('紀錄已儲存在應用內。', 'success');
       }
       $('retryLoadButton').addEventListener('click', async () => {
         const button = $('retryLoadButton');
-        button.disabled = true; button.textContent = '連線中…';
+        button.disabled = true; button.textContent = '載入中…';
         try { await init(); }
-        finally { button.disabled = false; if (!button.classList.contains('hidden')) button.textContent = '↻ 連線並同步'; }
+        finally { button.disabled = false; if (!button.classList.contains('hidden')) button.textContent = '↻ 重試應用內儲存'; }
       });
       init();
     </script>
