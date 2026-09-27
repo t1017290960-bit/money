@@ -116,7 +116,7 @@
       const today = `${monthNow}-${String(now.getDate()).padStart(2, '0')}`;
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
-      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', localMode = false;
+      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', localMode = false, browserStorageMode = false;
       const currencyNames = { TWD: '新台幣', USD: '美元', HKD: '港幣', CNY: '人民幣', JPY: '日圓' };
       function showStatus(message, kind = 'info') {
         const el = $('statusMessage');
@@ -243,12 +243,31 @@
         if (/記錄服務未連接/.test(detail)) return '記錄功能尚未連接。請從已儲存的應用重新開啟；若仍無法使用，請確認此應用已啟用紀錄儲存。';
         return '儲存未完成，表單內容已保留；請稍後重試。';
       }
+      async function getLocalItem(key) {
+        try {
+          const value = await window.sayoStorage.getItem(key);
+          if (value !== null && value !== undefined) return value;
+        } catch (error) { console.warn('應用儲存服務讀取失敗，改用瀏覽器儲存', error); }
+        try {
+          const value = localStorage.getItem(key);
+          if (value !== null) browserStorageMode = true;
+          return value;
+        } catch (error) { console.error('瀏覽器本機儲存讀取失敗', error); throw error; }
+      }
+      async function setLocalItem(key, value) {
+        if (!browserStorageMode) {
+          try { await window.sayoStorage.setItem(key, value); return; }
+          catch (error) { console.warn('應用儲存服務寫入失敗，改用瀏覽器儲存', error); }
+        }
+        try { localStorage.setItem(key, value); browserStorageMode = true; }
+        catch (error) { console.error('瀏覽器本機儲存寫入失敗', error); throw error; }
+      }
       async function saveRecord(collection, item, button) {
         button.disabled = true; button.textContent = '儲存中…';
         try {
           if (localMode) {
             const current = collection === 'transactions' ? transactions : budgets;
-            await window.sayoStorage.setItem(`finance_${collection}`, JSON.stringify([...current, item]));
+            await setLocalItem(`finance_${collection}`, JSON.stringify([...current, item]));
             return true;
           }
           const db = window.sayoDb;
@@ -266,7 +285,7 @@
         try {
           if (localMode) {
             const remaining = transactions.filter(tx => tx.id !== item.id);
-            await window.sayoStorage.setItem('finance_transactions', JSON.stringify(remaining));
+            await setLocalItem('finance_transactions', JSON.stringify(remaining));
             transactions = remaining; renderAll(); showStatus('紀錄已刪除。', 'success'); return;
           }
           const result = await window.sayoDb.adminDelete('transactions', item.id, item.authorUserId);
@@ -279,7 +298,7 @@
         try {
           if (localMode) {
             const remaining = budgets.filter(entry => entry.id !== item.id);
-            await window.sayoStorage.setItem('finance_budgets', JSON.stringify(remaining));
+            await setLocalItem('finance_budgets', JSON.stringify(remaining));
             budgets = remaining; renderAll(); showStatus('預算已刪除。', 'success'); return;
           }
           const result = await window.sayoDb.adminDelete('budgets', item.id, item.authorUserId);
@@ -299,7 +318,7 @@
         const item = { id: makeId(), type, amount, category: $('transactionCategory').value, note: $('transactionNote').value.trim(), allocationNote: type === 'income' ? $('incomeAllocation').value.trim() : '', date, month: date.slice(0, 7), createdAt: new Date().toISOString() };
         const button = $('transactionSubmit');
         if (await saveRecord('transactions', item, button)) {
-          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus('收支紀錄已儲存。', 'success');
+          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus(browserStorageMode ? '收支紀錄已儲存在此瀏覽器。' : '收支紀錄已儲存。', 'success');
         }
       });
       $('budgetForm').addEventListener('submit', async event => {
@@ -308,13 +327,13 @@
         if (!Number.isFinite(amount) || amount <= 0) { showStatus('請輸入大於 0 的預算金額。', 'error'); return; }
         const item = { id: makeId(), month, category: $('budgetCategory').value, amount, createdAt: new Date().toISOString() };
         if (await saveRecord('budgets', item, $('budgetSubmit'))) {
-          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus('分類預算已儲存。', 'success');
+          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus(browserStorageMode ? '分類預算已儲存在此瀏覽器。' : '分類預算已儲存。', 'success');
         }
       });
       $('currencySelect').addEventListener('change', async event => {
         currency = event.target.value; renderAll();
-        try { await window.sayoStorage.setItem('financeCurrency', currency); showStatus(`幣別已切換為${currencyNames[currency]}。`, 'success'); }
-        catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但設定未能保存。', 'error'); }
+        try { await setLocalItem('financeCurrency', currency); showStatus(`幣別已切換為${currencyNames[currency]}。`, 'success'); }
+        catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但儲存失敗；請檢查瀏覽器儲存空間設定。', 'error'); }
       });
       async function readAllRecords(collection) {
         const db = window.sayoDb;
@@ -333,7 +352,7 @@
         return all;
       }
       async function readLocalRecords(collection) {
-        const raw = await window.sayoStorage.getItem(`finance_${collection}`);
+        const raw = await getLocalItem(`finance_${collection}`);
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) throw new Error('本機紀錄格式不正確');
@@ -363,7 +382,7 @@
           }
         }
         try {
-          const savedCurrency = await window.sayoStorage.getItem('financeCurrency');
+          const savedCurrency = await getLocalItem('financeCurrency');
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
         renderAll();
