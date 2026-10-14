@@ -5,109 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>我的財務小天地｜收支與預算</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="application/json" id="sayo-db-schema">
-      { "collections": [ { "name": "transactions", "label": "收支紀錄", "fields": ["id", "type", "amount", "category", "note", "allocationNote", "date", "month", "authorUserId", "createdAt"] }, { "name": "budgets", "label": "每月預算", "fields": ["id", "month", "category", "amount", "authorUserId", "createdAt"] } ] }
-    // ==========================================
-// PocketBase 財務網頁前端連線設定
-// ==========================================
-
-// 1. 已更新為您當前最新的 Cloudflare Tunnel 網址
-const PB_URL = 'https://hamilton-levels-trackbacks-hit.trycloudflare.com';
-
-// ==========================================
-// 2. 收支紀錄 (transactions) 相關操作
-// ==========================================
-
-// 讀取所有收支紀錄
-async function loadTransactions() {
-    try {
-        const response = await fetch(`${PB_URL}/api/collections/transactions/records`);
-        const result = await response.json();
-        return result.items || [];
-    } catch (error) {
-        console.error('無法連線至 PocketBase 讀取收支紀錄：', error);
-        return [];
-    }
-}
-
-// 新增一筆收支紀錄
-async function addTransaction(transactionData) {
-    /* 
-      傳入資料格式範例：
-      {
-        "type": "支出",          // "收入" 或 "支出"
-        "amount": 150,          // 金額 (數字)
-        "category": "飲食",     // 分類
-        "note": "午餐",         // 備註
-        "date": "2026-10-14",   // 日期
-        "month": "2026-10",     // 月份
-        "authorUserId": "你的ID" // 使用者ID
-      }
-    */
-    try {
-        const response = await fetch(`${PB_URL}/api/collections/transactions/records`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(transactionData)
-        });
-
-        if (response.ok) {
-            console.log('收支紀錄成功儲存至迷你電腦！');
-            return true;
-        } else {
-            const errorData = await response.json();
-            console.error('儲存失敗：', errorData);
-            return false;
-        }
-    } catch (error) {
-        console.error('網路連線發生錯誤：', error);
-        return false;
-    }
-}
-
-// ==========================================
-// 3. 預算 (budgets) 相關操作
-// ==========================================
-
-// 讀取所有預算資料
-async function loadBudgets() {
-    try {
-        const response = await fetch(`${PB_URL}/api/collections/budgets/records`);
-        const result = await response.json();
-        return result.items || [];
-    } catch (error) {
-        console.error('無法連線至 PocketBase 讀取預算：', error);
-        return [];
-    }
-}
-
-// 新增一筆預算設定
-async function addBudget(budgetData) {
-    try {
-        const response = await fetch(`${PB_URL}/api/collections/budgets/records`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(budgetData)
-        });
-
-        if (response.ok) {
-            console.log('預算成功儲存至迷你電腦！');
-            return true;
-        } else {
-            const errorData = await response.json();
-            console.error('預算儲存失敗：', errorData);
-            return false;
-        }
-    } catch (error) {
-        console.error('網路連線發生錯誤：', error);
-        return false;
-    }
-}
-    </script>
   </head>
   <body class="min-h-screen bg-gradient-to-br from-emerald-50 via-cyan-50 to-indigo-50 text-slate-900">
     <main class="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
@@ -130,6 +27,15 @@ async function addBudget(budgetData) {
         </div>
       </header>
 
+      <section class="rounded-2xl border border-emerald-200 bg-white/95 p-4 shadow-sm sm:flex sm:items-end sm:justify-between sm:gap-5">
+        <div class="mb-3 sm:mb-0"><h2 class="font-bold">🔐 PocketBase 帳戶同步</h2><p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600">登入後讀寫帳戶紀錄，不會在頁面保存密碼。請在 PocketBase 設定收支與預算資料規則，限制使用者只能存取自己的紀錄。</p></div>
+        <form id="pbLoginForm" class="grid w-full gap-2 sm:max-w-2xl sm:grid-cols-[1fr_1fr_auto]">
+          <label class="sr-only" for="pbIdentity">PocketBase 帳戶</label><input id="pbIdentity" type="text" required autocomplete="username" placeholder="帳戶電郵或用戶名稱" class="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
+          <label class="sr-only" for="pbPassword">密碼</label><input id="pbPassword" type="password" required autocomplete="current-password" placeholder="PocketBase 密碼" class="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
+          <button id="pbLoginButton" type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60">登入</button>
+        </form>
+        <div id="pbAccountPanel" class="hidden shrink-0 items-center gap-3"><span class="text-sm font-semibold text-emerald-800">已連接 PocketBase</span><button id="pbLogoutButton" type="button" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50">登出</button></div>
+      </section>
       <p id="statusMessage" role="status" aria-live="polite" class="hidden rounded-xl px-4 py-3 text-sm"></p>
       <button id="retryLoadButton" type="button" class="hidden rounded-lg border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-800 shadow-sm hover:bg-rose-50 disabled:opacity-60">↻ 重新載入紀錄</button>
 
@@ -205,7 +111,7 @@ async function addBudget(budgetData) {
           </section>
         </div>
       </div>
-      <footer class="pb-2 text-center text-xs text-slate-500">應用內紀錄無法使用時，會改存此瀏覽器；瀏覽器備份只在目前裝置可用，不會同步到其他裝置。</footer>
+      <footer class="pb-2 text-center text-xs text-slate-500">資料透過 HTTPS 傳送至 PocketBase。不要在前端放置管理員密碼或管理員權杖；跨裝置使用時請以個人帳戶登入。</footer>
     </main>
     <script>
       const expenseCategories = ['餐飲', '交通', '居住', '購物', '娛樂', '醫療', '教育', '帳單', '存錢', '投資', '其他'];
@@ -216,8 +122,10 @@ async function addBudget(budgetData) {
       const today = `${monthNow}-${String(now.getDate()).padStart(2, '0')}`;
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
-      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', localMode = false, browserStorageMode = false;
-      const localOnlyTransactionIds = new Set(), localOnlyBudgetIds = new Set();
+      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', browserStorageMode = false;
+      const PB_URL = 'https://hamilton-levels-trackbacks-hit.trycloudflare.com';
+      const PB_AUTH_KEY = 'financePocketBaseSession';
+      let pbToken = '', pbUserId = '';
       const currencyNames = { TWD: '新台幣', USD: '美元', HKD: '港幣', CNY: '人民幣', JPY: '日圓' };
       function showStatus(message, kind = 'info') {
         const el = $('statusMessage');
@@ -326,23 +234,54 @@ async function addBudget(budgetData) {
         if (['forbidden', 'read-only', 'readonly', 'permission-denied'].includes(code)) return '目前無法寫入這份資料，請確認帳戶權限。';
         return writeMessages[code] || result?.error || '儲存失敗，請稍後再試。';
       }
-      async function waitForRecordService(timeoutMs = 6000) {
-        const started = Date.now();
-        while (Date.now() - started < timeoutMs) {
-          const db = window.sayoDb;
-          if (db && typeof db.getUserId === 'function' && typeof db.append === 'function' && (typeof db.getAll === 'function' || typeof db.get === 'function')) return db;
-          await new Promise(resolve => setTimeout(resolve, 150));
+      async function pbRequest(path, options = {}) {
+        const headers = { ...(options.headers || {}) };
+        if (pbToken) headers.Authorization = pbToken;
+        let response;
+        try { response = await fetch(`${PB_URL}${path}`, { ...options, headers, credentials: 'omit' }); }
+        catch (error) { throw new Error('連接 PocketBase 失敗，請確認伺服器網址及網路。'); }
+        let payload = null;
+        try { payload = await response.json(); } catch {}
+        if (!response.ok) {
+          if (response.status === 401) clearPbSession();
+          const message = payload?.message || (response.status === 401 ? '登入已失效，請重新登入。' : response.status === 403 ? 'PocketBase 拒絕此操作，請檢查資料存取規則。' : `PocketBase 回應錯誤（${response.status}）。`);
+          const error = new Error(message); error.status = response.status; error.data = payload; throw error;
         }
-        throw new Error('記錄服務未連接');
+        return payload;
       }
-      function thrownSaveError(error) {
-        const code = String(error?.code || '').toLowerCase();
-        const detail = String(error?.message || '').toLowerCase();
-        if (['unauthorized', 'unauthenticated'].includes(code) || /unauthori[sz]ed|unauthenticated|sign.?in/.test(detail)) return '登入狀態無效，請重新登入後再儲存。';
-        if (/forbidden|read.?only|permission denied/.test(detail)) return '目前無法寫入這份資料，請確認帳戶權限。';
-        if (/network|fetch|timeout|connection/.test(detail)) return '網路連線不穩，請檢查連線後重試。';
-        if (/記錄服務未連接/.test(detail)) return '記錄功能尚未連接。請從已儲存的應用重新開啟；若仍無法使用，請確認此應用已啟用紀錄儲存。';
-        return '儲存未完成，表單內容已保留；請稍後重試。';
+      function savePbSession(token, record) {
+        pbToken = token || ''; pbUserId = record?.id || '';
+        try { localStorage.setItem(PB_AUTH_KEY, JSON.stringify({ token: pbToken, userId: pbUserId })); }
+        catch (error) { console.warn('無法保存登入狀態；此分頁仍可繼續使用', error); }
+        updatePbAuthUi();
+      }
+      function clearPbSession() {
+        pbToken = ''; pbUserId = ''; isOwner = false;
+        try { localStorage.removeItem(PB_AUTH_KEY); } catch (error) { console.warn('清除登入狀態失敗', error); }
+        updatePbAuthUi();
+      }
+      function updatePbAuthUi() {
+        const loggedIn = Boolean(pbToken && pbUserId);
+        $('pbLoginForm').classList.toggle('hidden', loggedIn);
+        $('pbAccountPanel').classList.toggle('hidden', !loggedIn);
+        $('pbAccountPanel').classList.toggle('flex', loggedIn);
+      }
+      function pbErrorMessage(error) {
+        if (error?.status === 401) return 'PocketBase 登入已失效，請重新登入。';
+        if (error?.status === 403) return 'PocketBase 拒絕此操作。請確認收支及預算資料規則只允許本人存取。';
+        return error?.message || 'PocketBase 暫時無法使用，請稍後再試。';
+      }
+      async function pbLoadCollection(collection) {
+        const results = [];
+        let page = 1, totalPages = 1;
+        do {
+          const params = new URLSearchParams({ page: String(page), perPage: '200', sort: '-created', filter: `authorUserId = "${pbUserId}"` });
+          const result = await pbRequest(`/api/collections/${collection}/records?${params.toString()}`);
+          if (!Array.isArray(result?.items)) throw new Error(`PocketBase「${collection}」集合回傳格式不正確。`);
+          results.push(...result.items.map(record => ({ ...record, id: record.id, createdAt: record.createdAt || record.created || '' })));
+          totalPages = Number(result.totalPages) || 1; page++;
+        } while (page <= totalPages);
+        return results;
       }
       async function getLocalItem(key) {
         try {
@@ -366,52 +305,30 @@ async function addBudget(budgetData) {
       async function saveRecord(collection, item, button) {
         button.disabled = true; button.textContent = '儲存中…';
         try {
-          if (!localMode) {
-            try {
-              const db = window.sayoDb;
-              if (!db || typeof db.append !== 'function' || typeof db.getUserId !== 'function') throw new Error('應用內紀錄服務未連接');
-              item.authorUserId = await db.getUserId();
-              if (!item.authorUserId) throw new Error('登入狀態無效');
-              const result = await db.append(collection, item);
-              if (!result || !result.ok) throw new Error(writeError(result || {}));
-              return true;
-            } catch (error) { console.error('應用內儲存失敗，改用此瀏覽器', error); }
-          }
-          const current = collection === 'transactions' ? transactions : budgets;
-          await setLocalItem(`finance_${collection}`, JSON.stringify([...current, item]));
-          localMode = true; isOwner = true;
-          showStatus('應用內儲存未能使用，紀錄已改存此瀏覽器；不會同步到其他裝置。', 'info');
+          if (!pbToken || !pbUserId) throw new Error('請先登入 PocketBase 才可儲存紀錄。');
+          const payload = { ...item, authorUserId: pbUserId };
+          delete payload.id;
+          const record = await pbRequest(`/api/collections/${collection}/records`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          item.id = record.id; item.authorUserId = pbUserId;
           return true;
-        } catch (error) { console.error('收支紀錄儲存失敗', error); showStatus('儲存失敗，表單內容已保留；請檢查瀏覽器儲存空間後重試。', 'error'); return false; }
+        } catch (error) { console.error('PocketBase 儲存失敗', error); showStatus(pbErrorMessage(error), 'error'); return false; }
         finally { button.disabled = false; button.textContent = collection === 'transactions' ? '新增紀錄' : '儲存此分類預算'; }
       }
       async function deleteTransaction(item) {
         if (!confirm('確定刪除此筆收支紀錄？')) return;
         try {
-          if (localMode || localOnlyTransactionIds.has(item.id)) {
-            const stored = await readLocalRecords('transactions');
-            await setLocalItem('finance_transactions', JSON.stringify(stored.filter(tx => tx.id !== item.id)));
-            localOnlyTransactionIds.delete(item.id);
-            transactions = transactions.filter(tx => tx.id !== item.id); renderAll(); showStatus('紀錄已刪除。', 'success'); return;
-          }
-          const result = await window.sayoDb.adminDelete('transactions', item.id, item.authorUserId);
-          if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
-          transactions = transactions.filter(tx => tx.id !== item.id); renderAll(); showStatus('紀錄已刪除。', 'success');
-        } catch (error) { console.error('刪除收支紀錄失敗', error); showStatus('刪除失敗，請稍後再試。', 'error'); }
+          if (!pbToken) throw new Error('請先登入 PocketBase。');
+          await pbRequest(`/api/collections/transactions/records/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+          transactions = transactions.filter(tx => tx.id !== item.id); renderAll(); showStatus('收支紀錄已從 PocketBase 刪除。', 'success');
+        } catch (error) { console.error('PocketBase 刪除收支紀錄失敗', error); showStatus(pbErrorMessage(error), 'error'); }
       }
       async function deleteBudget(item) {
         if (!confirm('確定刪除此分類預算？')) return;
         try {
-          if (localMode || localOnlyBudgetIds.has(item.id)) {
-            const stored = await readLocalRecords('budgets');
-            await setLocalItem('finance_budgets', JSON.stringify(stored.filter(entry => entry.id !== item.id)));
-            localOnlyBudgetIds.delete(item.id);
-            budgets = budgets.filter(entry => entry.id !== item.id); renderAll(); showStatus('預算已刪除。', 'success'); return;
-          }
-          const result = await window.sayoDb.adminDelete('budgets', item.id, item.authorUserId);
-          if (result && result.ok === false) { showStatus(writeError(result), 'error'); return; }
-          budgets = budgets.filter(entry => entry.id !== item.id); renderAll(); showStatus('預算已刪除。', 'success');
-        } catch (error) { console.error('刪除預算失敗', error); showStatus('刪除失敗，請稍後再試。', 'error'); }
+          if (!pbToken) throw new Error('請先登入 PocketBase。');
+          await pbRequest(`/api/collections/budgets/records/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+          budgets = budgets.filter(entry => entry.id !== item.id); renderAll(); showStatus('預算已從 PocketBase 刪除。', 'success');
+        } catch (error) { console.error('PocketBase 刪除預算失敗', error); showStatus(pbErrorMessage(error), 'error'); }
       }
       $('transactionType').addEventListener('change', updateTransactionCategories);
       $('monthFilter').addEventListener('change', renderAll);
@@ -425,7 +342,7 @@ async function addBudget(budgetData) {
         const item = { id: makeId(), type, amount, category: $('transactionCategory').value, note: $('transactionNote').value.trim(), allocationNote: type === 'income' ? $('incomeAllocation').value.trim() : '', date, month: date.slice(0, 7), createdAt: new Date().toISOString() };
         const button = $('transactionSubmit');
         if (await saveRecord('transactions', item, button)) {
-          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus(localMode ? '收支紀錄已儲存在此裝置；不會同步。' : '收支紀錄已儲存。', 'success');
+          transactions.push(item); $('monthFilter').value = item.month; $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = ''; renderAll(); showStatus('收支紀錄已安全寫入 PocketBase。', 'success');
         }
       });
       $('budgetForm').addEventListener('submit', async event => {
@@ -434,7 +351,7 @@ async function addBudget(budgetData) {
         if (!Number.isFinite(amount) || amount <= 0) { showStatus('請輸入大於 0 的預算金額。', 'error'); return; }
         const item = { id: makeId(), month, category: $('budgetCategory').value, amount, createdAt: new Date().toISOString() };
         if (await saveRecord('budgets', item, $('budgetSubmit'))) {
-          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus(localMode ? '分類預算已儲存在此裝置；不會同步。' : '分類預算已儲存。', 'success');
+          budgets.push(item); $('budgetAmount').value = ''; renderAll(); showStatus('分類預算已安全寫入 PocketBase。', 'success');
         }
       });
       $('currencySelect').addEventListener('change', async event => {
@@ -442,64 +359,53 @@ async function addBudget(budgetData) {
         try { await setLocalItem('financeCurrency', currency); showStatus(`幣別已切換為${currencyNames[currency]}。`, 'success'); }
         catch (error) { console.error('儲存幣別設定失敗', error); showStatus('幣別已切換，但儲存失敗；請檢查瀏覽器儲存空間設定。', 'error'); }
       });
-      async function readAllRecords(collection) {
-        const db = window.sayoDb;
-        if (!db) throw new Error('資料服務尚未就緒');
-        if (typeof db.getAll === 'function') return await db.getAll(collection);
-        if (typeof db.get !== 'function') throw new Error('資料服務尚未就緒');
-        const all = [];
-        let page = await db.get(collection);
-        if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
-        all.push(...page);
-        while (page.hasMore && page.nextCursor) {
-          page = await db.get(collection, { cursor: page.nextCursor });
-          if (!Array.isArray(page)) throw new Error(`無法讀取${collection}資料`);
-          all.push(...page);
-        }
-        return all;
-      }
-      async function readLocalRecords(collection) {
-        const raw = await getLocalItem(`finance_${collection}`);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) throw new Error('本機紀錄格式不正確');
-        return parsed;
-      }
       async function init() {
         updateTransactionCategories(); addOptions($('budgetCategory'), expenseCategories);
-        renderAll();
-        let loadIssue = '';
-        try {
-          const db = window.sayoDb;
-          if (!db || (typeof db.getAll !== 'function' && typeof db.get !== 'function')) throw new Error('應用內紀錄服務未連接');
-          const [savedTransactions, savedBudgets] = await Promise.all([readAllRecords('transactions'), readAllRecords('budgets')]);
-          if (!Array.isArray(savedTransactions) || !Array.isArray(savedBudgets)) throw new Error('紀錄格式不正確');
-          transactions = savedTransactions; budgets = savedBudgets; localMode = false;
-          try { isOwner = typeof db.isOwner === 'function' ? await db.isOwner() : false; }
-          catch (error) { console.error('確認管理權限失敗', error); isOwner = false; }
-        } catch (error) {
-          console.info('應用內紀錄服務無法使用，改用此瀏覽器儲存', error);
-          localMode = true; isOwner = true; localOnlyTransactionIds.clear(); localOnlyBudgetIds.clear();
-          try { [transactions, budgets] = await Promise.all([readLocalRecords('transactions'), readLocalRecords('budgets')]); }
-          catch (localError) { console.error('載入瀏覽器紀錄失敗', localError); transactions = []; budgets = []; loadIssue = '無法讀取此瀏覽器的紀錄，請檢查儲存空間設定。'; }
-        }
         try {
           const savedCurrency = await getLocalItem('financeCurrency');
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
-        renderAll();
-        const retryButton = $('retryLoadButton');
-        if (localMode || loadIssue) { retryButton.classList.remove('hidden'); retryButton.textContent = '↻ 重試應用內儲存'; }
-        else retryButton.classList.add('hidden');
-        if (loadIssue) showStatus(loadIssue, 'error');
-        else if (localMode) showStatus('應用內儲存未能使用，紀錄改存在此瀏覽器；不會同步到其他裝置。', 'info');
-        else showStatus('紀錄已儲存在應用內。', 'success');
+        let savedSession = null;
+        try { savedSession = JSON.parse(localStorage.getItem(PB_AUTH_KEY) || 'null'); }
+        catch (error) { console.warn('讀取 PocketBase 登入狀態失敗', error); }
+        if (!pbToken && savedSession?.token) { pbToken = savedSession.token; pbUserId = savedSession.userId || ''; }
+        updatePbAuthUi();
+        if (!pbToken || !pbUserId) {
+          transactions = []; budgets = []; isOwner = false; renderAll();
+          $('retryLoadButton').classList.add('hidden');
+          showStatus('請登入 PocketBase 帳戶以載入收支與預算。', 'info');
+          return;
+        }
+        try {
+          const [savedTransactions, savedBudgets] = await Promise.all([pbLoadCollection('transactions'), pbLoadCollection('budgets')]);
+          transactions = savedTransactions; budgets = savedBudgets; isOwner = true; renderAll();
+          $('retryLoadButton').classList.add('hidden');
+          showStatus('PocketBase 已連線，紀錄已載入。', 'success');
+        } catch (error) {
+          console.error('PocketBase 載入紀錄失敗', error); transactions = []; budgets = []; isOwner = false; renderAll();
+          $('retryLoadButton').classList.remove('hidden'); $('retryLoadButton').textContent = '↻ 重試載入';
+          showStatus(pbErrorMessage(error), 'error');
+        }
       }
+      $('pbLoginForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = $('pbLoginButton'); button.disabled = true; button.textContent = '登入中…';
+        try {
+          const result = await pbRequest('/api/collections/users/auth-with-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity: $('pbIdentity').value.trim(), password: $('pbPassword').value }) });
+          if (!result?.token || !result?.record?.id) throw new Error('PocketBase 登入回應缺少帳戶資料。');
+          savePbSession(result.token, result.record); $('pbPassword').value = '';
+          await init();
+        } catch (error) { console.error('PocketBase 登入失敗', error); showStatus(pbErrorMessage(error), 'error'); }
+        finally { button.disabled = false; button.textContent = '登入'; }
+      });
+      $('pbLogoutButton').addEventListener('click', () => {
+        clearPbSession(); transactions = []; budgets = []; renderAll();
+        showStatus('已登出 PocketBase。', 'info');
+      });
       $('retryLoadButton').addEventListener('click', async () => {
-        const button = $('retryLoadButton');
-        button.disabled = true; button.textContent = '載入中…';
+        const button = $('retryLoadButton'); button.disabled = true; button.textContent = '載入中…';
         try { await init(); }
-        finally { button.disabled = false; if (!button.classList.contains('hidden')) button.textContent = '↻ 重試應用內儲存'; }
+        finally { button.disabled = false; if (!button.classList.contains('hidden')) button.textContent = '↻ 重試載入'; }
       });
       init();
     </script>
