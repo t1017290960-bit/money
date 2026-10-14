@@ -30,12 +30,28 @@
       <section class="rounded-2xl border border-emerald-200 bg-white/95 p-4 shadow-sm sm:flex sm:items-end sm:justify-between sm:gap-5">
         <div class="mb-3 sm:mb-0"><h2 class="font-bold">🔐 PocketBase 帳戶同步</h2><p class="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600">登入後讀寫帳戶紀錄，不會在頁面保存密碼。請在 PocketBase 設定收支與預算資料規則，限制使用者只能存取自己的紀錄。</p></div>
         <form id="pbLoginForm" class="grid w-full gap-2 sm:max-w-2xl sm:grid-cols-[1fr_1fr_auto]">
+          <label class="sr-only" for="pbAuthCollection">登入認證集合名稱</label><input id="pbAuthCollection" type="text" value="users" maxlength="80" autocomplete="off" placeholder="認證集合（預設 users）" class="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100 sm:col-span-3" />
           <label class="sr-only" for="pbIdentity">PocketBase 帳戶</label><input id="pbIdentity" type="text" required autocomplete="username" placeholder="帳戶電郵或用戶名稱" class="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
           <label class="sr-only" for="pbPassword">密碼</label><input id="pbPassword" type="password" required autocomplete="current-password" placeholder="PocketBase 密碼" class="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
           <button id="pbLoginButton" type="submit" class="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60">登入</button>
         </form>
         <div id="pbAccountPanel" class="hidden shrink-0 items-center gap-3"><span class="text-sm font-semibold text-emerald-800">已連接 PocketBase</span><button id="pbLogoutButton" type="button" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50">登出</button></div>
       </section>
+      <details class="rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-slate-700">
+        <summary class="cursor-pointer font-bold text-amber-950">PocketBase 403 或欄位錯誤？檢查安全規則與資料欄位</summary>
+        <div class="mt-3 space-y-3 leading-relaxed">
+          <p>在 PocketBase 為 <strong>transactions</strong> 與 <strong>budgets</strong> 建立以下欄位，名稱及大小寫須完全相同。金額設為 <strong>Number</strong>，其餘列出的欄位設為 <strong>Plain text</strong>；<code>type</code> 儲存 <code>income</code> 或 <code>expense</code>。不要另外建立 <code>id</code> 或 <code>createdAt</code>，PocketBase 會自行提供 <code>id</code> 和 <code>created</code>。</p>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="rounded-xl border border-amber-100 bg-white p-3"><p class="font-bold">transactions</p><code class="mt-1 block break-words text-xs">type: Text<br>amount: Number<br>category: Text<br>note: Text<br>allocationNote: Text（可選）<br>date: Text<br>month: Text<br>authorUserId: Text</code></div>
+            <div class="rounded-xl border border-amber-100 bg-white p-3"><p class="font-bold">budgets</p><code class="mt-1 block break-words text-xs">month: Text<br>category: Text<br>amount: Number<br>authorUserId: Text</code></div>
+          </div>
+          <p>兩個集合的 List / View / Delete Rule：</p>
+          <code class="block break-all rounded-lg bg-white p-3 text-xs">@request.auth.id != "" && authorUserId = @request.auth.id</code>
+          <p>Create Rule：</p>
+          <code class="block break-all rounded-lg bg-white p-3 text-xs">@request.auth.id != "" && @request.body.authorUserId = @request.auth.id</code>
+          <p class="text-xs text-slate-600">若伺服器仍只回報「Something went wrong」，請查看 PocketBase 伺服器日誌以取得具體欄位錯誤。規則應限制本人資料存取；切勿啟用公開寫入或將管理員密碼放進網頁。</p>
+        </div>
+      </details>
       <p id="statusMessage" role="status" aria-live="polite" class="hidden rounded-xl px-4 py-3 text-sm"></p>
       <button id="retryLoadButton" type="button" class="hidden rounded-lg border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-800 shadow-sm hover:bg-rose-50 disabled:opacity-60">↻ 重新載入紀錄</button>
 
@@ -268,8 +284,17 @@
       }
       function pbErrorMessage(error) {
         if (error?.status === 401) return 'PocketBase 登入已失效，請重新登入。';
-        if (error?.status === 403) return 'PocketBase 拒絕此操作。請確認收支及預算資料規則只允許本人存取。';
-        return error?.message || 'PocketBase 暫時無法使用，請稍後再試。';
+        if (error?.status === 403) return 'PocketBase 已登入，但拒絕存取資料。請展開「PocketBase 403 或欄位錯誤？」檢查安全規則。';
+        const message = String(error?.message || '');
+        if (/failed to authenticate/i.test(message)) return 'PocketBase 無法驗證帳戶。請確認帳戶名稱／電郵與密碼正確，且上方認證集合名稱與 PocketBase 的「Auth collection」完全一致（預設通常是 users）。一般資料集合不能用來登入。';
+        if (error?.status === 404) return 'PocketBase 找不到指定的登入認證集合。請檢查認證集合名稱及伺服器網址。';
+        const fields = error?.data?.data;
+        if (fields && typeof fields === 'object') {
+          const details = Object.entries(fields).map(([name, detail]) => `${name}: ${detail?.message || detail?.code || '欄位驗證失敗'}`).join('；');
+          if (details) return `PocketBase 欄位驗證失敗：${details}。請展開「PocketBase 403 或欄位錯誤？」核對欄位名稱與類型。`;
+        }
+        if (/something went wrong while processing your request/i.test(message)) return 'PocketBase 回報伺服器處理錯誤。請核對資料集合欄位與類型，並查看 PocketBase 伺服器日誌取得詳細原因。';
+        return message || 'PocketBase 暫時無法使用，請稍後再試。';
       }
       async function pbLoadCollection(collection) {
         const results = [];
@@ -308,6 +333,7 @@
           if (!pbToken || !pbUserId) throw new Error('請先登入 PocketBase 才可儲存紀錄。');
           const payload = { ...item, authorUserId: pbUserId };
           delete payload.id;
+          delete payload.createdAt;
           const record = await pbRequest(`/api/collections/${collection}/records`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           item.id = record.id; item.authorUserId = pbUserId;
           return true;
@@ -365,6 +391,10 @@
           const savedCurrency = await getLocalItem('financeCurrency');
           if (['TWD', 'USD', 'HKD', 'CNY', 'JPY'].includes(savedCurrency)) { currency = savedCurrency; $('currencySelect').value = currency; }
         } catch (error) { console.error('載入幣別設定失敗', error); }
+        try {
+          const savedAuthCollection = localStorage.getItem('financePocketBaseAuthCollection');
+          if (savedAuthCollection && /^[a-zA-Z0-9_-]{1,80}$/.test(savedAuthCollection)) $('pbAuthCollection').value = savedAuthCollection;
+        } catch (error) { console.warn('讀取認證集合名稱失敗', error); }
         let savedSession = null;
         try { savedSession = JSON.parse(localStorage.getItem(PB_AUTH_KEY) || 'null'); }
         catch (error) { console.warn('讀取 PocketBase 登入狀態失敗', error); }
@@ -391,7 +421,10 @@
         event.preventDefault();
         const button = $('pbLoginButton'); button.disabled = true; button.textContent = '登入中…';
         try {
-          const result = await pbRequest('/api/collections/users/auth-with-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity: $('pbIdentity').value.trim(), password: $('pbPassword').value }) });
+          const authCollection = $('pbAuthCollection').value.trim();
+          if (!/^[a-zA-Z0-9_-]{1,80}$/.test(authCollection)) throw new Error('請輸入有效的 PocketBase 認證集合名稱。');
+          try { localStorage.setItem('financePocketBaseAuthCollection', authCollection); } catch (error) { console.warn('無法保存認證集合名稱', error); }
+          const result = await pbRequest(`/api/collections/${encodeURIComponent(authCollection)}/auth-with-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity: $('pbIdentity').value.trim(), password: $('pbPassword').value }) });
           if (!result?.token || !result?.record?.id) throw new Error('PocketBase 登入回應缺少帳戶資料。');
           savePbSession(result.token, result.record); $('pbPassword').value = '';
           await init();
