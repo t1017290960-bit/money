@@ -7,6 +7,106 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="application/json" id="sayo-db-schema">
       { "collections": [ { "name": "transactions", "label": "收支紀錄", "fields": ["id", "type", "amount", "category", "note", "allocationNote", "date", "month", "authorUserId", "createdAt"] }, { "name": "budgets", "label": "每月預算", "fields": ["id", "month", "category", "amount", "authorUserId", "createdAt"] } ] }
+    // ==========================================
+// PocketBase 財務網頁前端連線設定
+// ==========================================
+
+// 1. 已更新為您當前最新的 Cloudflare Tunnel 網址
+const PB_URL = 'https://hamilton-levels-trackbacks-hit.trycloudflare.com';
+
+// ==========================================
+// 2. 收支紀錄 (transactions) 相關操作
+// ==========================================
+
+// 讀取所有收支紀錄
+async function loadTransactions() {
+    try {
+        const response = await fetch(`${PB_URL}/api/collections/transactions/records`);
+        const result = await response.json();
+        return result.items || [];
+    } catch (error) {
+        console.error('無法連線至 PocketBase 讀取收支紀錄：', error);
+        return [];
+    }
+}
+
+// 新增一筆收支紀錄
+async function addTransaction(transactionData) {
+    /* 
+      傳入資料格式範例：
+      {
+        "type": "支出",          // "收入" 或 "支出"
+        "amount": 150,          // 金額 (數字)
+        "category": "飲食",     // 分類
+        "note": "午餐",         // 備註
+        "date": "2026-10-14",   // 日期
+        "month": "2026-10",     // 月份
+        "authorUserId": "你的ID" // 使用者ID
+      }
+    */
+    try {
+        const response = await fetch(`${PB_URL}/api/collections/transactions/records`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(transactionData)
+        });
+
+        if (response.ok) {
+            console.log('收支紀錄成功儲存至迷你電腦！');
+            return true;
+        } else {
+            const errorData = await response.json();
+            console.error('儲存失敗：', errorData);
+            return false;
+        }
+    } catch (error) {
+        console.error('網路連線發生錯誤：', error);
+        return false;
+    }
+}
+
+// ==========================================
+// 3. 預算 (budgets) 相關操作
+// ==========================================
+
+// 讀取所有預算資料
+async function loadBudgets() {
+    try {
+        const response = await fetch(`${PB_URL}/api/collections/budgets/records`);
+        const result = await response.json();
+        return result.items || [];
+    } catch (error) {
+        console.error('無法連線至 PocketBase 讀取預算：', error);
+        return [];
+    }
+}
+
+// 新增一筆預算設定
+async function addBudget(budgetData) {
+    try {
+        const response = await fetch(`${PB_URL}/api/collections/budgets/records`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(budgetData)
+        });
+
+        if (response.ok) {
+            console.log('預算成功儲存至迷你電腦！');
+            return true;
+        } else {
+            const errorData = await response.json();
+            console.error('預算儲存失敗：', errorData);
+            return false;
+        }
+    } catch (error) {
+        console.error('網路連線發生錯誤：', error);
+        return false;
+    }
+}
     </script>
   </head>
   <body class="min-h-screen bg-gradient-to-br from-emerald-50 via-cyan-50 to-indigo-50 text-slate-900">
