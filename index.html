@@ -139,7 +139,7 @@
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
       let transactions = [], budgets = [], isOwner = false, currency = 'HKD', browserStorageMode = false;
-      const PB_URL = 'https://hamilton-levels-trackbacks-hit.trycloudflare.com';
+      const PB_URL = 'https://kansas-knives-included-steel.trycloudflare.com';
       const PB_AUTH_KEY = 'financePocketBaseSession';
       let pbToken = '', pbUserId = '';
       const currencyNames = { TWD: '新台幣', USD: '美元', HKD: '港幣', CNY: '人民幣', JPY: '日圓' };
@@ -301,7 +301,13 @@
         let page = 1, totalPages = 1;
         do {
           const params = new URLSearchParams({ page: String(page), perPage: '200', sort: '-created', filter: `authorUserId = "${pbUserId}"` });
-          const result = await pbRequest(`/api/collections/${collection}/records?${params.toString()}`);
+          let result;
+          try { result = await pbRequest(`/api/collections/${collection}/records?${params.toString()}`); }
+          catch (error) {
+            if (error?.status === 400 && collection === 'budgets') throw new Error('PocketBase 的 budgets 集合查詢失敗（HTTP 400）。若伺服器日誌顯示 authorUserId 是 unknown field，請在 budgets 新增 authorUserId 欄位（Plain text），並保留只允許本人讀寫的安全規則；不要移除使用者篩選。');
+            if (error?.status === 400 && collection === 'transactions') throw new Error('PocketBase 的 transactions 集合查詢失敗（HTTP 400）。請核對集合欄位名稱與本人資料安全規則。');
+            throw error;
+          }
           if (!Array.isArray(result?.items)) throw new Error(`PocketBase「${collection}」集合回傳格式不正確。`);
           results.push(...result.items.map(record => ({ ...record, id: record.id, createdAt: record.createdAt || record.created || '' })));
           totalPages = Number(result.totalPages) || 1; page++;
