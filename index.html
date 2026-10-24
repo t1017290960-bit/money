@@ -116,7 +116,7 @@
             <div id="budgetList" class="mt-5 space-y-4"></div>
           </section>
           <section class="rounded-3xl border border-cyan-100 bg-white/95 p-5 shadow-lg shadow-cyan-900/5 sm:p-6">
-            <div class="flex items-center justify-between gap-3"><div><h2 class="text-lg font-extrabold">🧾 近期紀錄</h2><p class="mt-1 text-sm text-slate-500">顯示所選月份的收支。</p></div><span id="transactionCount" class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"></span></div>
+            <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-lg font-extrabold">🧾 近期紀錄</h2><p id="recordScopeText" class="mt-1 text-sm text-slate-500">顯示所選月份的收支。</p></div><div class="flex items-center gap-2"><button id="toggleAllRecords" type="button" aria-expanded="false" class="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 hover:bg-cyan-100">展開全部交易</button><span id="transactionCount" class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"></span></div></div>
             <div class="mt-4 grid gap-3 sm:grid-cols-[1fr_9rem]">
               <label class="sr-only" for="recordSearch">搜尋紀錄</label>
               <input id="recordSearch" type="search" placeholder="搜尋備註、分類或日期" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
@@ -138,7 +138,7 @@
       const today = `${monthNow}-${String(now.getDate()).padStart(2, '0')}`;
       $('monthFilter').value = monthNow;
       $('transactionDate').value = today;
-      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', browserStorageMode = false;
+      let transactions = [], budgets = [], isOwner = false, currency = 'HKD', browserStorageMode = false, showAllTransactions = false;
       const PB_URL = 'https://equally-states-transmission-gate.trycloudflare.com';
       const PB_AUTH_KEY = 'financePocketBaseSession';
       let pbToken = '', pbUserId = '';
@@ -221,14 +221,18 @@
         }
 
         const list = $('recentList'); list.replaceChildren();
+        $('toggleAllRecords').textContent = showAllTransactions ? '只看本月' : '展開全部交易';
+        $('toggleAllRecords').setAttribute('aria-expanded', String(showAllTransactions));
+        $('recordScopeText').textContent = showAllTransactions ? '顯示所有月份的交易紀錄；本月摘要維持不變。' : '顯示所選月份的收支。';
         const query = $('recordSearch').value.trim().toLocaleLowerCase('zh-TW');
         const typeFilter = $('recordTypeFilter').value;
-        const sortedTransactions = monthTransactions.filter(item => (typeFilter === 'all' || item.type === typeFilter) && (!query || `${item.note || ''} ${item.category || ''} ${item.allocationNote || ''} ${item.date || ''}`.toLocaleLowerCase('zh-TW').includes(query))).sort((a, b) => `${b.date || ''}${b.createdAt || ''}`.localeCompare(`${a.date || ''}${a.createdAt || ''}`));
+        const recordSource = showAllTransactions ? transactions : monthTransactions;
+        const sortedTransactions = recordSource.filter(item => (typeFilter === 'all' || item.type === typeFilter) && (!query || `${item.note || ''} ${item.category || ''} ${item.allocationNote || ''} ${item.date || ''}`.toLocaleLowerCase('zh-TW').includes(query))).sort((a, b) => `${b.date || ''}${b.createdAt || ''}`.localeCompare(`${a.date || ''}${a.createdAt || ''}`));
         $('transactionCount').textContent = `${sortedTransactions.length} 筆`;
         if (!sortedTransactions.length) {
-          const empty = document.createElement('p'); empty.className = 'py-6 text-center text-sm text-slate-500'; empty.textContent = monthTransactions.length ? '找不到符合條件的紀錄，請調整搜尋或類型。' : '這個月尚無收支紀錄。'; list.appendChild(empty);
+          const empty = document.createElement('p'); empty.className = 'py-6 text-center text-sm text-slate-500'; empty.textContent = recordSource.length ? '找不到符合條件的紀錄，請調整搜尋或類型。' : (showAllTransactions ? '尚無交易紀錄。' : '這個月尚無收支紀錄。'); list.appendChild(empty);
         } else {
-          sortedTransactions.slice(0, 30).forEach(item => {
+          sortedTransactions.forEach(item => {
             const row = document.createElement('div'); row.className = 'flex items-center justify-between gap-3 py-3';
             const info = document.createElement('div'); info.className = 'min-w-0';
             const title = document.createElement('p'); title.className = 'truncate font-medium'; title.textContent = String(item.note || item.category || '未分類');
@@ -240,7 +244,6 @@
             if (isOwner) right.appendChild(makeDeleteButton('此筆紀錄', () => deleteTransaction(item)));
             row.append(info, right); list.appendChild(row);
           });
-          if (sortedTransactions.length > 30) { const more = document.createElement('p'); more.className = 'pt-2 text-center text-xs text-slate-400'; more.textContent = '僅顯示最近 30 筆'; list.appendChild(more); }
         }
       }
       const writeMessages = { 'too-large': '資料太大，請縮短備註後再試。', 'too-many-items': '紀錄筆數已達上限，無法新增。', 'quota-exceeded': '儲存空間已滿，請稍後再試。', 'rate-limited': '操作太頻繁，請稍候再試。', 'stale-replace': '資料已更新，請重新整理後再試。' };
@@ -323,7 +326,10 @@
           const value = localStorage.getItem(key);
           if (value !== null) browserStorageMode = true;
           return value;
-        } catch (error) { console.error('瀏覽器本機儲存讀取失敗', error); throw error; }
+        } catch {
+          // Embedded or privacy-restricted browsers may disable localStorage; treat it as unavailable.
+          return null;
+        }
       }
       async function setLocalItem(key, value) {
         if (!browserStorageMode) {
@@ -366,6 +372,7 @@
       $('monthFilter').addEventListener('change', renderAll);
       $('recordSearch').addEventListener('input', renderAll);
       $('recordTypeFilter').addEventListener('change', renderAll);
+      $('toggleAllRecords').addEventListener('click', () => { showAllTransactions = !showAllTransactions; renderAll(); });
       $('transactionForm').addEventListener('submit', async event => {
         event.preventDefault();
         const date = $('transactionDate').value, amount = Number($('transactionAmount').value);
