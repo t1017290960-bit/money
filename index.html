@@ -208,6 +208,51 @@
         button.addEventListener('click', handler);
         return button;
       }
+      function makeDateEditButton(item, row) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = '修改日期';
+        button.className = 'mt-1 rounded-md px-2 py-1 text-xs font-semibold text-cyan-800 hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-300';
+        button.setAttribute('aria-label', `修改 ${item.date || ''} 的收支日期`);
+        button.addEventListener('click', () => {
+          const next = row.nextElementSibling;
+          if (next?.dataset.dateEditor === 'true') { next.remove(); return; }
+          const editor = document.createElement('form');
+          editor.dataset.dateEditor = 'true';
+          editor.className = 'my-2 flex flex-wrap items-end gap-2 rounded-xl bg-cyan-50 p-3';
+          const label = document.createElement('label'); label.className = 'text-xs font-semibold text-slate-700'; label.textContent = '收支日期';
+          const input = document.createElement('input'); input.type = 'date'; input.required = true; input.value = item.date || '';
+          input.className = 'mt-1 block rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-100';
+          label.appendChild(input);
+          const save = document.createElement('button'); save.type = 'submit'; save.textContent = '儲存日期';
+          save.className = 'rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-800 disabled:opacity-60';
+          const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
+          cancel.className = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50';
+          cancel.addEventListener('click', () => editor.remove());
+          editor.append(label, save, cancel);
+          editor.addEventListener('submit', async event => {
+            event.preventDefault();
+            const newDate = input.value;
+            if (!newDate) { showStatus('請選擇有效日期。', 'error'); return; }
+            if (newDate === item.date) { editor.remove(); return; }
+            save.disabled = true; cancel.disabled = true; save.textContent = '儲存中…';
+            const newMonth = newDate.slice(0, 7);
+            try {
+              const updated = await pbRequest(`/api/collections/transactions/records/${encodeURIComponent(item.id)}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: newDate, month: newMonth })
+              });
+              item.date = updated?.date || newDate; item.month = updated?.month || newMonth;
+              if (!showAllTransactions) $('monthFilter').value = item.month;
+              renderAll(); showStatus('收支日期已更新。', 'success');
+            } catch (error) {
+              console.error('更新收支日期失敗', error); showStatus(pbErrorMessage(error), 'error');
+              save.disabled = false; cancel.disabled = false; save.textContent = '儲存日期';
+            }
+          });
+          row.after(editor); input.focus();
+        });
+        return button;
+      }
       function renderAll() {
         const month = $('monthFilter').value || monthNow;
         $('budgetMonthLabel').textContent = `預算月份：${month}（可用上方月份切換）`;
@@ -264,6 +309,7 @@
             const title = document.createElement('p'); title.className = 'truncate font-medium'; title.textContent = String(item.note || item.category || '未分類');
             const meta = document.createElement('p'); meta.className = 'mt-0.5 whitespace-normal text-xs text-slate-500'; meta.textContent = `${item.date || ''} · ${item.category || '其他'}${item.allocationNote ? ` · 用途：${item.allocationNote}` : ''}`;
             info.append(title, meta);
+            if (isOwner) info.appendChild(makeDateEditButton(item, row));
             const right = document.createElement('div'); right.className = 'flex items-center';
             const amount = document.createElement('span'); amount.className = `whitespace-nowrap font-semibold ${item.type === 'income' ? 'text-emerald-700' : 'text-slate-800'}`; amount.textContent = `${item.type === 'income' ? '+' : '−'}${formatMoney(item.amount)}`;
             right.appendChild(amount);
