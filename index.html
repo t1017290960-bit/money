@@ -233,19 +233,23 @@
             event.preventDefault();
             const newDate = input.value;
             if (!newDate) { showStatus('請選擇有效日期。', 'error'); return; }
+            if (!item.id || !pbToken) { showStatus('找不到交易資料或登入已失效，請重新登入後再試。', 'error'); return; }
             if (newDate === item.date) { editor.remove(); return; }
-            save.disabled = true; cancel.disabled = true; save.textContent = '儲存中…';
+            save.disabled = true; cancel.disabled = true; save.textContent = '儲存並確認中…';
             const newMonth = newDate.slice(0, 7);
             try {
-              const updated = await pbRequest(`/api/collections/transactions/records/${encodeURIComponent(item.id)}`, {
+              await pbRequest(`/api/collections/transactions/records/${encodeURIComponent(item.id)}`, {
                 method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ date: newDate, month: newMonth })
               });
-              item.date = updated?.date || newDate; item.month = updated?.month || newMonth;
-              if (!showAllTransactions) $('monthFilter').value = item.month;
-              renderAll(); showStatus('收支日期已更新。', 'success');
+              const verified = await pbRequest(`/api/collections/transactions/records/${encodeURIComponent(item.id)}`);
+              if (verified?.date !== newDate || verified?.month !== newMonth) throw new Error('伺服器讀回的日期與新日期不符，資料未確認更新。');
+              const freshItem = { ...verified, createdAt: verified.createdAt || verified.created || '' };
+              transactions = transactions.map(tx => tx.id === item.id ? freshItem : tx);
+              if (!showAllTransactions) $('monthFilter').value = newMonth;
+              renderAll(); showStatus(`日期已保存至 PocketBase：${newDate}`, 'success');
             } catch (error) {
-              console.error('更新收支日期失敗', error); showStatus(pbErrorMessage(error), 'error');
+              console.error('更新或確認收支日期失敗', error); showStatus(pbErrorMessage(error), 'error');
               save.disabled = false; cancel.disabled = false; save.textContent = '儲存日期';
             }
           });
@@ -352,7 +356,7 @@
       }
       function pbErrorMessage(error) {
         if (error?.status === 401) return 'PocketBase 登入已失效，請重新登入。';
-        if (error?.status === 403) return 'PocketBase 拒絕存取，請確認 transactions 和 budgets 集合的欄位及安全規則。';
+        if (error?.status === 403) return 'PocketBase 拒絕修改。請在 transactions 集合設定 Update Rule：@request.auth.id != "" && authorUserId = @request.auth.id，並確認本人帳戶可更新自己的紀錄。'
         const message = String(error?.message || '');
         if (/failed to authenticate/i.test(message)) return '無法驗證帳戶。請確認帳戶名稱／電郵、密碼及認證集合名稱正確。';
         if (error?.status === 404) return 'PocketBase 找不到指定的認證集合，請檢查集合名稱及伺服器網址。';
