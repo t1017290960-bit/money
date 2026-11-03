@@ -70,6 +70,10 @@
                   <select id="transactionCategory" required class="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100"></select>
                 </label>
               </div>
+              <label class="flex cursor-pointer items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-sm text-emerald-950">
+                <input id="batchExpenseMode" type="checkbox" class="mt-0.5 h-4 w-4 accent-emerald-700" />
+                <span><strong>勾選後立即新增 4 筆支出</strong><span class="mt-0.5 block text-xs text-emerald-800">金額：3.6、4.5、6、6；沿用所選日期、分類及備註，使用目前幣別，無須再按「新增紀錄」。</span></span>
+              </label>
               <div id="repeatSuggestion" class="hidden rounded-xl border border-amber-200 bg-amber-50 p-3" role="status" aria-live="polite">
                 <p id="repeatSuggestionText" class="text-sm font-semibold text-amber-950"></p>
                 <label class="mt-2 flex cursor-pointer items-start gap-2 text-sm text-amber-900"><input id="repeatApply" type="checkbox" class="mt-0.5 h-4 w-4 accent-emerald-700" /><span>套用最近一筆紀錄的分類、備註及用途（日期保留目前選擇；取消勾選可還原）</span></label>
@@ -454,6 +458,48 @@
       $('recordSearch').addEventListener('input', renderAll);
       $('recordTypeFilter').addEventListener('change', renderAll);
       $('toggleAllRecords').addEventListener('click', () => { showAllTransactions = !showAllTransactions; renderAll(); });
+      $('batchExpenseMode').addEventListener('change', async event => {
+        if (!event.target.checked) return;
+        const checkbox = event.target;
+        checkbox.disabled = true;
+        const amounts = [3.6, 4.5, 6, 6];
+        try {
+          if (!pbToken || !pbUserId) {
+            checkbox.checked = false;
+            showStatus('請先登入 PocketBase；勾選批次新增後，四筆支出才會直接寫入。', 'error');
+            return;
+          }
+          $('transactionType').value = 'expense';
+          updateTransactionCategories();
+          const date = $('transactionDate').value;
+          if (!date) {
+            checkbox.checked = false;
+            showStatus('請先選擇收支日期，再勾選批次新增。', 'error');
+            return;
+          }
+          const category = $('transactionCategory').value;
+          const note = $('transactionNote').value.trim();
+          let saved = 0;
+          for (const amount of amounts) {
+            const item = { id: makeId(), type: 'expense', amount, category, note, allocationNote: '', date, month: date.slice(0, 7), createdAt: new Date().toISOString() };
+            if (!await saveRecord('transactions', item, $('transactionSubmit'))) break;
+            transactions.push(item); saved++;
+          }
+          if (saved) {
+            $('monthFilter').value = date.slice(0, 7);
+            $('transactionAmount').value = ''; $('transactionNote').value = ''; $('incomeAllocation').value = '';
+            renderAll();
+          }
+          if (saved === amounts.length) showStatus('已直接寫入 4 筆支出：3.6、4.5、6、6。', 'success');
+          else if (saved > 0) showStatus(`已寫入 ${saved} / 4 筆；其餘未完成。請查看此提示中的 PocketBase 錯誤，再手動補上未完成金額。`, 'error');
+        } catch (error) {
+          console.error('批次新增支出失敗', error);
+          showStatus(pbErrorMessage(error), 'error');
+        } finally {
+          checkbox.checked = false;
+          checkbox.disabled = false;
+        }
+      });
       $('transactionForm').addEventListener('submit', async event => {
         event.preventDefault();
         const date = $('transactionDate').value, amount = Number($('transactionAmount').value);
